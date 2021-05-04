@@ -1,61 +1,117 @@
-/** User class for message.ly */
-
-
-
-/** User of the site. */
+const db = require("../db");
+const bcrypt = require("bcrypt");
+const ExpressError = require("../expressError");
+const { BCRYPT_WORK_FACTOR } = require("../config");
 
 class User {
+	static async register({ username, password, first_name, last_name, phone }) {
+		let hash = await bcrypt.hash(password, BCRYPT_WORK_FACTOR);
+		const res = await db.query(
+			`INSERT INTO users 
+      (username, password, first_name, last_name, phone, join_at, last_login_at)
+      VALUES ($1, $2, $3, $4, $5, current_timestamp, current_timestamp)
+      RETURNING username, password, first_name, last_name, phone`,
+			[username, hash, first_name, last_name, phone]
+		);
 
-  /** register new user -- returns
-   *    {username, password, first_name, last_name, phone}
-   */
+		return res.rows[0];
+	}
 
-  static async register({username, password, first_name, last_name, phone}) { }
+	static async authenticate(username, password) {
+		const res = await db.query(
+			`SELECT password
+      FROM users
+      WHERE username = $1`,
+			[username]
+		);
 
-  /** Authenticate: is this username/password valid? Returns boolean. */
+		let user = res.rows[0];
+		return user && (await bcrypt.compare(password, user.password));
+	}
 
-  static async authenticate(username, password) { }
+	static async updateLoginTimestamp(username) {
+		const res = await db.query(
+			`UPDATE users
+      SET last_login_at = current_timestamp
+      WHERE username = $1
+      RETURNING username`,
+			[username]
+		);
+		if (!res.rows[0]) {
+			throw new ExpressError(`User ${username} does not exist`, 404);
+		}
+	}
 
-  /** Update last_login_at for user */
+	static async all() {
+		const res = await db.query(
+			`SELECT username, first_name, last_name, phone
+      FROM users
+      ORDER BY username`
+		);
+		return res.rows;
+	}
 
-  static async updateLoginTimestamp(username) { }
+	static async get(username) {
+		const res = await db.query(
+			`SELECT username, first_name, last_name, phone, join_at, last_login_at
+      FROM users
+      WHERE username = $1`,
+			[username]
+		);
 
-  /** All: basic info on all users:
-   * [{username, first_name, last_name, phone}, ...] */
+		if (!res.rows[0]) {
+			throw new ExpressError(`User ${username} does not exist`, 404);
+		}
 
-  static async all() { }
+		return res.rows[0];
+	}
 
-  /** Get: get user by username
-   *
-   * returns {username,
-   *          first_name,
-   *          last_name,
-   *          phone,
-   *          join_at,
-   *          last_login_at } */
+	static async messagesFrom(username) {
+		const res = await db.query(
+			`SELECT m.id, m.to_username, u.first_name, u.last_name, u.phone, m.body, m.sent_at, m.read_at
+      FROM messages as m
+      JOIN users as u
+      ON m.to_username = u.username
+      WHERE from_username = $1`,
+			[username]
+		);
 
-  static async get(username) { }
+		return res.rows.map((message) => ({
+			id: message.id,
+			to_user: {
+				username: message.to_username,
+				first_name: message.first_name,
+				last_name: message.last_name,
+				phone: message.phone,
+			},
+			body: message.body,
+			sent_at: message.sent_at,
+			read_at: message.read_at,
+		}));
+	}
 
-  /** Return messages from this user.
-   *
-   * [{id, to_user, body, sent_at, read_at}]
-   *
-   * where to_user is
-   *   {username, first_name, last_name, phone}
-   */
-
-  static async messagesFrom(username) { }
-
-  /** Return messages to this user.
-   *
-   * [{id, from_user, body, sent_at, read_at}]
-   *
-   * where from_user is
-   *   {id, first_name, last_name, phone}
-   */
-
-  static async messagesTo(username) { }
+	static async messagesTo(username) {
+		const res = await db.query(
+			`SELECT m.id, m.from_username, u.first_name, u.last_name, u.phone, m.body, m.sent_at, m.read_at
+      FROM messages as m
+      JOIN users as u
+      ON m.from_username = u.username
+      WHERE to_username = $1`,
+			[username]
+		);
+		return res.rows.map((message) => ({
+			id: message.id,
+			from_user: {
+				username: message.from_username,
+				first_name: message.first_name,
+				last_name: message.last_name,
+				phone: message.phone,
+			},
+			body: message.body,
+			sent_at: message.sent_at,
+			read_at: message.read_at,
+		}));
+	}
 }
-
 
 module.exports = User;
